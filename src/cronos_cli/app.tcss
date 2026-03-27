@@ -1,0 +1,143 @@
+/* ── Global ──────────────────────────────────────────────────────────── */
+
+Screen {
+    background: $background;
+}
+
+/* ── Main layout ─────────────────────────────────────────────────────── */
+
+#main-layout {
+    height: 1fr;
+}
+
+#left-panel {
+    width: 2fr;
+    border: tall $primary;
+    margin: 1 0 1 1;
+}
+
+#right-panel {
+    width: 1fr;
+    border: tall $accent;
+    margin: 1 1 1 1;
+}
+
+/* ── Left panel ──────────────────────────────────────────────────────── */
+
+#tasks-header {
+    background: $primary 20%;
+    text-style: bold;
+    height: 3;
+    content-align: left middle;
+    padding: 0 1;
+    color: $text;
+}
+
+#task-table {
+    height: 1fr;
+}
+
+/* ── Right panel: detail (top) + summary (bottom) ────────────────────── */
+
+#detail-panel {
+    height: 1fr;
+    border-bottom: solid $accent 40%;
+}
+
+#summary-panel {
+    height: 1fr;
+}
+
+#detail-header {
+    background: $accent 20%;
+    text-style: bold;
+    height: 3;
+    content-align: left middle;
+    padding: 0 1;
+    color: $text;
+}
+
+#summary-header {
+    background: $accent 20%;
+    text-style: bold;
+    height: 3;
+    content-align: left middle;
+    padding: 0 1;
+    color: $text;
+}
+
+#task-detail {
+    height: 1fr;
+    padding: 0 1;
+    overflow-y: auto;
+    text-align: center;
+}
+
+#summary-table {
+    height: 1fr;
+}
+
+/* ── Confirmation dialog ─────────────────────────────────────────────── */
+
+ConfirmDialog {
+    align: center middle;
+}
+
+#confirm-box {
+    width: 54;
+    height: auto;
+    border: tall $warning;
+    background: $surface;
+    padding: 1 3;
+}
+
+#confirm-msg {
+    text-align: center;
+    padding: 1 0;
+    width: 1fr;
+    color: $text;
+}
+
+#confirm-hint {
+    text-align: center;
+    color: $text 60%;
+    padding: 1 0;
+    width: 1fr;
+}
+
+/* ── Task form ───────────────────────────────────────────────────────── */
+
+TaskFormScreen {
+    align: center middle;
+}
+
+#task-form {
+    width: 66;
+    height: auto;
+    border: tall $primary;
+    background: $surface;
+    padding: 1 3;
+}
+
+#form-title {
+    text-style: bold;
+    text-align: center;
+    width: 1fr;
+    padding-bottom: 1;
+    color: $primary;
+}
+
+#form-hint {
+    text-align: center;
+    color: $text 60%;
+    width: 1fr;
+    padding-top: 1;
+}
+
+Label {
+    margin-top: 1;
+}
+
+Input {
+    margin-bottom: 1;
+}

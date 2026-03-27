@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cronos-cli"
+version = "0.1.0"
+description = "A TUI time tracking app built with Textual"
+requires-python = ">=3.13"
+dependencies = [
+    "textual>=8.1.1",
+]
+
+[project.scripts]
+cronos-cli = "cronos_cli.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cronos_cli"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
