@@ -56,6 +56,11 @@ Screen {
     height: 1fr;
 }
 
+#filter-input {
+    margin: 0 1;
+    height: 3;
+}
+
 #task-table {
     height: 1fr;
 }

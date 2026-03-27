@@ -196,6 +196,7 @@ class MainScreen(Screen):
         self._expanded: set[str] = set()
         self._today_items: list[FlatItem] = []
         self._all_items: list[FlatItem] = []
+        self._filter_text: str = ""
 
     # ── Compose ───────────────────────────────────────────────────────────────
 
@@ -208,6 +209,7 @@ class MainScreen(Screen):
                     yield DataTable(id="today-table", cursor_type="row")
                 with Vertical(id="all-tasks-panel"):
                     yield Label("  All Tasks", id="all-tasks-header")
+                    yield Input(placeholder="Filter tasks...", id="filter-input")
                     yield DataTable(id="task-table", cursor_type="row")
             with Vertical(id="right-panel"):
                 with Vertical(id="detail-panel"):
@@ -240,6 +242,8 @@ class MainScreen(Screen):
         sub_table.add_column("Subtask", key="name")
         sub_table.add_column("Time", key="time")
 
+        self.query_one("#filter-input", Input).display = False
+
         self._load_and_refresh()
         self._tick_handle = self.set_interval(1.0, self._on_tick)
 
@@ -260,6 +264,21 @@ class MainScreen(Screen):
             self._refresh_detail()
 
     def on_key(self, event) -> None:
+        filter_input = self.query_one("#filter-input", Input)
+
+        # Open filter
+        if event.key == "slash" and not filter_input.has_focus:
+            filter_input.display = True
+            filter_input.focus()
+            event.stop()
+            return
+
+        # Close filter on Escape
+        if event.key == "escape" and filter_input.display:
+            self._clear_filter()
+            event.stop()
+            return
+
         if event.key == "ctrl+j":
             self.query_one("#task-table", DataTable).focus()
             event.stop()
@@ -268,6 +287,7 @@ class MainScreen(Screen):
             self.query_one("#today-table", DataTable).focus()
             event.stop()
             return
+
         focused = self._focused_table()
         if focused is None:
             return
@@ -280,6 +300,23 @@ class MainScreen(Screen):
         elif event.key == "enter":
             self.action_toggle_expand()
             event.stop()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "filter-input":
+            self._filter_text = event.value
+            self._rebuild_all_table_only()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "filter-input":
+            self.query_one("#task-table", DataTable).focus()
+
+    def _clear_filter(self) -> None:
+        self._filter_text = ""
+        fi = self.query_one("#filter-input", Input)
+        fi.value = ""
+        fi.display = False
+        self._rebuild_all_table_only()
+        self.query_one("#task-table", DataTable).focus()
 
     # ── Selection helpers ──────────────────────────────────────────────────────
 
@@ -327,14 +364,47 @@ class MainScreen(Screen):
 
     def _build_items(self, today_only: bool) -> list[FlatItem]:
         items: list[FlatItem] = []
+        q = self._filter_text.lower().strip() if not today_only else ""
         for task in self.ctrl.tasks:
             if self._is_today_task(task) != today_only:
                 continue
-            items.append(FlatItem(task=task))
-            if task.id in self._expanded and task.subtasks:
-                for sub in task.subtasks:
-                    items.append(FlatItem(task=sub, parent=task))
+            if not q:
+                items.append(FlatItem(task=task))
+                if task.id in self._expanded and task.subtasks:
+                    for sub in task.subtasks:
+                        items.append(FlatItem(task=sub, parent=task))
+            else:
+                task_matches = q in task.name.lower()
+                matching_subs = [s for s in task.subtasks if q in s.name.lower()]
+                if not task_matches and not matching_subs:
+                    continue
+                items.append(FlatItem(task=task))
+                if task_matches:
+                    # Respect the normal expand state
+                    if task.id in self._expanded and task.subtasks:
+                        for sub in task.subtasks:
+                            items.append(FlatItem(task=sub, parent=task))
+                else:
+                    # Show only the matching subtasks (auto-expanded)
+                    for sub in matching_subs:
+                        items.append(FlatItem(task=sub, parent=task))
         return items
+
+    def _rebuild_all_table_only(self) -> None:
+        all_table = self.query_one("#task-table", DataTable)
+        saved_all = (
+            self._all_items[all_table.cursor_row].task.id
+            if all_table.row_count > 0 and 0 <= all_table.cursor_row < len(self._all_items)
+            else None
+        )
+        self._all_items = self._build_items(today_only=False)
+        self._rebuild_table("task-table", self._all_items, saved_all)
+        # Update header to reflect active filter
+        header = self.query_one("#all-tasks-header", Label)
+        if self._filter_text:
+            header.update(f"  All Tasks  ·  /{self._filter_text}/")
+        else:
+            header.update("  All Tasks")
 
     def _fill_table(self, table: DataTable, items: list[FlatItem]) -> None:
         table.clear()
