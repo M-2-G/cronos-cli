@@ -11,7 +11,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import DataTable, Footer, Header, Input, Label, Rule, Static
 
 from cronos_cli.controller import CronosController
-from cronos_cli.models import Task
+from cronos_cli.models import Task, TaskStatus
 from cronos_cli.storage import StorageManager
 
 
@@ -59,6 +59,13 @@ def _time_cell(seconds: float, icon: str) -> Text:
     if icon == "⏸":
         return Text.from_markup(f"[bright_yellow]{time_str}[/bright_yellow]")
     return Text(time_str)
+
+
+def _complete_cell(status: TaskStatus) -> Text:
+    """Rich Text for the completion status cell."""
+    if status == TaskStatus.COMPLETED:
+        return Text.from_markup("[green]✓[/green]")
+    return Text(" ")
 
 
 def _icon_cell(icon: str) -> Text:
@@ -212,15 +219,18 @@ class MainScreen(Screen):
     def on_mount(self) -> None:
         task_table = self.query_one("#task-table", DataTable)
         task_table.add_column(" ", key="status")
+        task_table.add_column(" ", key="done")
         task_table.add_column("Task Name", key="name")
         task_table.add_column("Time Today", key="time")
 
         summary_table = self.query_one("#summary-table", DataTable)
+        summary_table.add_column(" ", key="done")
         summary_table.add_column("Task", key="task")
         summary_table.add_column("Total Time", key="total")
 
         sub_table = self.query_one("#subtask-detail-table", DataTable)
         sub_table.add_column(" ", key="status")
+        sub_table.add_column(" ", key="done")
         sub_table.add_column("Subtask", key="name")
         sub_table.add_column("Time", key="time")
 
@@ -281,22 +291,22 @@ class MainScreen(Screen):
         table.clear()
 
         for item in self._flat_items:
-            check = "✓ " if item.task.status == "completed" else ""
             if item.is_subtask:
                 icon = self.ctrl.get_status_icon(item.task.id)
-                name = f"  └ {check}{item.task.name}"
+                name = f"  └ {item.task.name}"
                 secs = self.ctrl.get_own_seconds(item.task.id)
             else:
                 icon = self.ctrl.get_effective_status_icon(item.task.id)
                 has_subs = bool(item.task.subtasks)
                 if has_subs:
                     marker = " ▾" if item.task.id in self._expanded else " ▸"
-                    name = f"{check}{item.task.name}{marker}"
+                    name = f"{item.task.name}{marker}"
                 else:
-                    name = f"{check}{item.task.name}"
+                    name = item.task.name
                 secs = self.ctrl.get_today_seconds(item.task.id)
             table.add_row(
                 _icon_cell(icon),
+                _complete_cell(item.task.status),
                 name,
                 _time_cell(secs, icon),
                 key=item.task.id,
@@ -330,15 +340,14 @@ class MainScreen(Screen):
         for task in self.ctrl.tasks:
             secs = self.ctrl.get_today_seconds(task.id)
             if secs > 0:
-                check = "✓ " if task.status == "completed" else ""
-                summary.add_row(f"{check}{task.name}", fmt_time(secs))
+                summary.add_row(_complete_cell(task.status), task.name, fmt_time(secs))
                 has_time = True
         if not has_time:
-            summary.add_row("No time tracked today", "──────")
+            summary.add_row(Text(" "), "No time tracked today", "──────")
         else:
             total = self.ctrl.get_total_today_seconds()
-            summary.add_row("─────────────", "─────────")
-            summary.add_row("[bold]Total[/bold]", f"[bold]{fmt_time(total)}[/bold]")
+            summary.add_row(Text(" "), "─────────────", "─────────")
+            summary.add_row(Text(" "), "[bold]Total[/bold]", f"[bold]{fmt_time(total)}[/bold]")
 
     def _refresh_detail(self) -> None:
         detail = self.query_one("#task-detail", Static)
@@ -374,11 +383,12 @@ class MainScreen(Screen):
             lines.append("")
             lines.append("[dim]No active timer[/dim]")
 
-        check = "✓ " if task.status == "completed" else ""
         lines += ["", "─" * 22, ""]
-        lines.append(f"[bold]{check}{task.name}[/bold]")
+        lines.append(f"[bold]{task.name}[/bold]")
         if task.description:
             lines.append(f"[dim]{task.description}[/dim]")
+        if task.status == TaskStatus.COMPLETED:
+            lines.append("[green]✓  Completed[/green]")
 
         detail.update("\n".join(lines))
 
@@ -389,10 +399,10 @@ class MainScreen(Screen):
             for sub in task.subtasks:
                 sub_icon = self.ctrl.get_status_icon(sub.id)
                 sub_secs = self.ctrl.get_own_seconds(sub.id)
-                sub_check = "✓ " if sub.status == "completed" else ""
                 sub_table.add_row(
                     _icon_cell(sub_icon),
-                    f"{sub_check}{sub.name}",
+                    _complete_cell(sub.status),
+                    sub.name,
                     _time_cell(sub_secs, sub_icon),
                 )
         else:

@@ -3,7 +3,13 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from typing import Optional
+
+
+class TaskStatus(Enum):
+    NONE = ""
+    COMPLETED = "completed"
 
 
 @dataclass
@@ -15,7 +21,7 @@ class Task:
         default_factory=lambda: datetime.now().isoformat(timespec="seconds")
     )
     subtasks: list["Task"] = field(default_factory=list)
-    status: str = ""
+    status: TaskStatus = TaskStatus.NONE
 
     def to_dict(self) -> dict:
         return {
@@ -24,18 +30,22 @@ class Task:
             "description": self.description,
             "created_at": self.created_at,
             "subtasks": [s.to_dict() for s in self.subtasks],
-            "status": self.status,
+            "status": self.status.value,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> Task:
+        try:
+            status = TaskStatus(data.get("status", ""))
+        except ValueError:
+            status = TaskStatus.NONE
         return cls(
             id=data["id"],
             name=data["name"],
             description=data.get("description", ""),
             created_at=data["created_at"],
             subtasks=[Task.from_dict(s) for s in data.get("subtasks", [])],
-            status=data.get("status", ""),
+            status=status,
         )
 
 

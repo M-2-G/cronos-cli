@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from cronos_cli.models import Task, TimeEntry
+from cronos_cli.models import Task, TaskStatus, TimeEntry
 
 
 class TestTask:
@@ -38,15 +38,15 @@ class TestTask:
         assert restored.subtasks[0].name == "Child"
         assert restored.subtasks[0].description == "sub"
 
-    def test_status_defaults_empty(self):
-        assert Task(name="T").status == ""
+    def test_status_defaults_none(self):
+        assert Task(name="T").status == TaskStatus.NONE
 
     def test_legacy_dict_no_subtasks_key(self):
         """Tasks saved before subtasks feature load without error."""
         data = {"id": "abc", "name": "Old", "description": "", "created_at": "2024-01-01T00:00:00"}
         task = Task.from_dict(data)
         assert task.subtasks == []
-        assert task.status == ""
+        assert task.status == TaskStatus.NONE
 
 
 class TestTimeEntry:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from cronos_cli.models import Task, TimeEntry
+from cronos_cli.models import Task, TaskStatus, TimeEntry
 from cronos_cli.storage import StorageManager
 
 
@@ -44,7 +44,7 @@ class CronosController:
         task = self._find_task(task_id)
         if task is None:
             return
-        task.status = "" if task.status == "completed" else "completed"
+        task.status = TaskStatus.NONE if task.status == TaskStatus.COMPLETED else TaskStatus.COMPLETED
         self.storage.save_tasks(self.tasks)
 
     def update_task(self, task: Task, name: str, description: str) -> None:

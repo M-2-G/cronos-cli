@@ -6,6 +6,7 @@ import time
 import pytest
 
 from cronos_cli.controller import CronosController
+from cronos_cli.models import TaskStatus
 from cronos_cli.storage import StorageManager
 
 
@@ -344,24 +345,24 @@ class TestToggleComplete:
     def test_marks_task_completed(self, ctrl):
         task = ctrl.create_task("T", "")
         ctrl.toggle_complete(task.id)
-        assert task.status == "completed"
+        assert task.status == TaskStatus.COMPLETED
 
     def test_unmarks_completed_task(self, ctrl):
         task = ctrl.create_task("T", "")
         ctrl.toggle_complete(task.id)
         ctrl.toggle_complete(task.id)
-        assert task.status == ""
+        assert task.status == TaskStatus.NONE
 
     def test_persists(self, ctrl, storage):
         task = ctrl.create_task("T", "")
         ctrl.toggle_complete(task.id)
-        assert storage.load_tasks()[0].status == "completed"
+        assert storage.load_tasks()[0].status == TaskStatus.COMPLETED
 
     def test_works_on_subtask(self, ctrl):
         parent = ctrl.create_task("P", "")
         sub = ctrl.create_subtask(parent.id, "S", "")
         ctrl.toggle_complete(sub.id)
-        assert sub.status == "completed"
+        assert sub.status == TaskStatus.COMPLETED
 
     def test_unknown_id_is_noop(self, ctrl):
         ctrl.toggle_complete("no-such-id")
