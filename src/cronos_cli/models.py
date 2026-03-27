@@ -14,6 +14,7 @@ class Task:
     created_at: str = field(
         default_factory=lambda: datetime.now().isoformat(timespec="seconds")
     )
+    subtasks: list["Task"] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -21,6 +22,7 @@ class Task:
             "name": self.name,
             "description": self.description,
             "created_at": self.created_at,
+            "subtasks": [s.to_dict() for s in self.subtasks],
         }
 
     @classmethod
@@ -30,6 +32,7 @@ class Task:
             name=data["name"],
             description=data.get("description", ""),
             created_at=data["created_at"],
+            subtasks=[Task.from_dict(s) for s in data.get("subtasks", [])],
         )
 
 

@@ -73,6 +73,12 @@ Screen {
     text-align: center;
 }
 
+#subtask-detail-table {
+    height: auto;
+    max-height: 8;
+    margin: 0 1;
+}
+
 #summary-table {
     height: 1fr;
 }

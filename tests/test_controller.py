@@ -335,3 +335,213 @@ class TestGetStatusIcon:
 
     def test_unknown_task_id(self, ctrl):
         assert ctrl.get_status_icon("no-such-id") == " "
+
+
+# ── Subtask feature ───────────────────────────────────────────────────────────
+
+
+class TestFindTask:
+    def test_finds_top_level(self, ctrl):
+        task = ctrl.create_task("T", "")
+        assert ctrl._find_task(task.id) is task
+
+    def test_finds_subtask(self, ctrl):
+        parent = ctrl.create_task("P", "")
+        sub = ctrl.create_subtask(parent.id, "S", "")
+        assert ctrl._find_task(sub.id) is sub
+
+    def test_returns_none_for_unknown(self, ctrl):
+        assert ctrl._find_task("no-such") is None
+
+
+class TestFindParent:
+    def test_returns_none_for_top_level(self, ctrl):
+        task = ctrl.create_task("T", "")
+        assert ctrl._find_parent(task.id) is None
+
+    def test_returns_parent_for_subtask(self, ctrl):
+        parent = ctrl.create_task("P", "")
+        sub = ctrl.create_subtask(parent.id, "S", "")
+        assert ctrl._find_parent(sub.id) is parent
+
+    def test_returns_none_for_unknown(self, ctrl):
+        assert ctrl._find_parent("no-such") is None
+
+
+class TestIsSubtask:
+    def test_top_level_is_not_subtask(self, ctrl):
+        task = ctrl.create_task("T", "")
+        assert not ctrl.is_subtask(task.id)
+
+    def test_subtask_is_subtask(self, ctrl):
+        parent = ctrl.create_task("P", "")
+        sub = ctrl.create_subtask(parent.id, "S", "")
+        assert ctrl.is_subtask(sub.id)
+
+
+class TestCreateSubtask:
+    def test_returns_task(self, ctrl):
+        parent = ctrl.create_task("P", "")
+        sub = ctrl.create_subtask(parent.id, "S", "desc")
+        assert sub is not None
+        assert sub.name == "S"
+        assert sub.description == "desc"
+
+    def test_added_to_parent_subtasks(self, ctrl):
+        parent = ctrl.create_task("P", "")
+        sub = ctrl.create_subtask(parent.id, "S", "")
+        assert sub in parent.subtasks
+
+    def test_persisted(self, ctrl, storage):
+        parent = ctrl.create_task("P", "")
+        ctrl.create_subtask(parent.id, "S", "")
+        loaded = storage.load_tasks()
+        assert len(loaded[0].subtasks) == 1
+        assert loaded[0].subtasks[0].name == "S"
+
+    def test_unknown_parent_returns_none(self, ctrl):
+        result = ctrl.create_subtask("no-such-id", "S", "")
+        assert result is None
+
+
+class TestDeleteTaskSubtasks:
+    def test_delete_subtask_removes_from_parent(self, ctrl):
+        parent = ctrl.create_task("P", "")
+        sub = ctrl.create_subtask(parent.id, "S", "")
+        ctrl.delete_task(sub.id)
+        assert sub not in parent.subtasks
+
+    def test_delete_subtask_persists(self, ctrl, storage):
+        parent = ctrl.create_task("P", "")
+        ctrl.create_subtask(parent.id, "S", "")
+        sub = parent.subtasks[0]
+        ctrl.delete_task(sub.id)
+        loaded = storage.load_tasks()
+        assert loaded[0].subtasks == []
+
+    def test_delete_parent_removes_subtask_timers(self, ctrl):
+        parent = ctrl.create_task("P", "")
+        sub = ctrl.create_subtask(parent.id, "S", "")
+        ctrl.toggle_timer(sub.id)
+        ctrl.delete_task(parent.id)
+        assert sub.id not in ctrl.active_entries
+
+    def test_delete_active_subtask_discards_entry(self, ctrl):
+        parent = ctrl.create_task("P", "")
+        sub = ctrl.create_subtask(parent.id, "S", "")
+        ctrl.toggle_timer(sub.id)
+        ctrl.delete_task(sub.id)
+        assert sub.id not in ctrl.active_entries
+
+
+class TestGetOwnSeconds:
+    def test_zero_when_no_activity(self, ctrl):
+        task = ctrl.create_task("T", "")
+        assert ctrl.get_own_seconds(task.id) == 0.0
+
+    def test_includes_active_entry(self, ctrl):
+        task = ctrl.create_task("T", "")
+        ctrl.toggle_timer(task.id)
+        assert ctrl.get_own_seconds(task.id) >= 0.0
+
+    def test_does_not_include_subtasks(self, ctrl):
+        parent = ctrl.create_task("P", "")
+        sub = ctrl.create_subtask(parent.id, "S", "")
+        ctrl.toggle_timer(sub.id)
+        time.sleep(0.05)
+        ctrl.stop_timer(sub.id)
+        assert ctrl.get_own_seconds(parent.id) == 0.0
+
+
+class TestGetTodaySecondsAggregation:
+    def test_top_level_includes_subtask_time(self, ctrl):
+        parent = ctrl.create_task("P", "")
+        sub = ctrl.create_subtask(parent.id, "S", "")
+        ctrl.toggle_timer(sub.id)
+        time.sleep(0.05)
+        ctrl.stop_timer(sub.id)
+        assert ctrl.get_today_seconds(parent.id) > 0
+
+    def test_subtask_returns_own_time_only(self, ctrl):
+        parent = ctrl.create_task("P", "")
+        sub = ctrl.create_subtask(parent.id, "S", "")
+        ctrl.toggle_timer(sub.id)
+        time.sleep(0.05)
+        ctrl.stop_timer(sub.id)
+        sub_secs = ctrl.get_today_seconds(sub.id)
+        parent_secs = ctrl.get_today_seconds(parent.id)
+        assert sub_secs == pytest.approx(parent_secs, abs=0.01)
+
+    def test_aggregates_multiple_subtasks(self, ctrl):
+        parent = ctrl.create_task("P", "")
+        s1 = ctrl.create_subtask(parent.id, "S1", "")
+        s2 = ctrl.create_subtask(parent.id, "S2", "")
+        ctrl.toggle_timer(s1.id)
+        time.sleep(0.05)
+        ctrl.stop_timer(s1.id)
+        ctrl.toggle_timer(s2.id)
+        time.sleep(0.05)
+        ctrl.stop_timer(s2.id)
+        total = ctrl.get_today_seconds(parent.id)
+        assert total >= ctrl.get_own_seconds(s1.id) + ctrl.get_own_seconds(s2.id)
+
+
+class TestToggleTimerSubtasks:
+    def test_starting_subtask_pauses_sibling(self, ctrl):
+        parent = ctrl.create_task("P", "")
+        s1 = ctrl.create_subtask(parent.id, "S1", "")
+        s2 = ctrl.create_subtask(parent.id, "S2", "")
+        ctrl.toggle_timer(s1.id)
+        ctrl.toggle_timer(s2.id)
+        assert ctrl.active_entries[s1.id].is_paused()
+        assert ctrl.active_entries[s2.id].is_running()
+
+    def test_resuming_subtask_pauses_running_sibling(self, ctrl):
+        parent = ctrl.create_task("P", "")
+        s1 = ctrl.create_subtask(parent.id, "S1", "")
+        s2 = ctrl.create_subtask(parent.id, "S2", "")
+        ctrl.toggle_timer(s1.id)
+        ctrl.toggle_timer(s2.id)  # s1 paused, s2 running
+        ctrl.toggle_timer(s1.id)  # resume s1 -> s2 should be paused
+        assert ctrl.active_entries[s2.id].is_paused()
+        assert ctrl.active_entries[s1.id].is_running()
+
+    def test_starting_subtask_pauses_parent_timer(self, ctrl):
+        parent = ctrl.create_task("P", "")
+        sub = ctrl.create_subtask(parent.id, "S", "")
+        ctrl.toggle_timer(parent.id)
+        ctrl.toggle_timer(sub.id)
+        assert ctrl.active_entries[parent.id].is_paused()
+        assert ctrl.active_entries[sub.id].is_running()
+
+    def test_starting_top_level_pauses_running_subtask(self, ctrl):
+        parent = ctrl.create_task("P", "")
+        sub = ctrl.create_subtask(parent.id, "S", "")
+        ctrl.toggle_timer(sub.id)
+        ctrl.toggle_timer(parent.id)
+        assert ctrl.active_entries[sub.id].is_paused()
+        assert ctrl.active_entries[parent.id].is_running()
+
+
+class TestGetEffectiveStatusIcon:
+    def test_idle_when_no_activity(self, ctrl):
+        task = ctrl.create_task("T", "")
+        assert ctrl.get_effective_status_icon(task.id) == " "
+
+    def test_own_running_returns_running(self, ctrl):
+        task = ctrl.create_task("T", "")
+        ctrl.toggle_timer(task.id)
+        assert ctrl.get_effective_status_icon(task.id) == "▶"
+
+    def test_subtask_running_shows_running_on_parent(self, ctrl):
+        parent = ctrl.create_task("P", "")
+        sub = ctrl.create_subtask(parent.id, "S", "")
+        ctrl.toggle_timer(sub.id)
+        assert ctrl.get_effective_status_icon(parent.id) == "▶"
+
+    def test_subtask_paused_shows_paused_on_parent(self, ctrl):
+        parent = ctrl.create_task("P", "")
+        sub = ctrl.create_subtask(parent.id, "S", "")
+        ctrl.toggle_timer(sub.id)
+        ctrl.toggle_timer(sub.id)
+        assert ctrl.get_effective_status_icon(parent.id) == "⏸"

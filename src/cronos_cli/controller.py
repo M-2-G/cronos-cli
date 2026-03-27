@@ -27,6 +27,18 @@ class CronosController:
         self.storage.save_tasks(self.tasks)
         return task
 
+    def create_subtask(
+        self, parent_id: str, name: str, description: str
+    ) -> Optional[Task]:
+        """Create a subtask under a top-level task."""
+        parent = next((t for t in self.tasks if t.id == parent_id), None)
+        if parent is None:
+            return None
+        subtask = Task(name=name, description=description)
+        parent.subtasks.append(subtask)
+        self.storage.save_tasks(self.tasks)
+        return subtask
+
     def update_task(self, task: Task, name: str, description: str) -> None:
         task.name = name
         task.description = description
@@ -36,7 +48,17 @@ class CronosController:
 
     def delete_task(self, task_id: str) -> None:
         self.active_entries.pop(task_id, None)
-        self.tasks = [t for t in self.tasks if t.id != task_id]
+        parent = self._find_parent(task_id)
+        if parent is not None:
+            # Deleting a subtask: remove from parent's subtask list
+            parent.subtasks = [s for s in parent.subtasks if s.id != task_id]
+        else:
+            # Deleting a top-level task: also discard any active subtask timers
+            task = next((t for t in self.tasks if t.id == task_id), None)
+            if task:
+                for sub in task.subtasks:
+                    self.active_entries.pop(sub.id, None)
+            self.tasks = [t for t in self.tasks if t.id != task_id]
         self.storage.save_tasks(self.tasks)
 
     # ── Timers ────────────────────────────────────────────────────────────────
@@ -51,12 +73,14 @@ class CronosController:
                 entry.total_seconds += (now - start).total_seconds()
                 entry.paused_at = now.isoformat(timespec="seconds")
             elif entry.is_paused():
+                self._pause_hierarchy_except(task_id, now)
                 entry.start_time = now.isoformat(timespec="seconds")
                 entry.paused_at = None
         else:
-            task = next((t for t in self.tasks if t.id == task_id), None)
+            task = self._find_task(task_id)
             if task is None:
                 return
+            self._pause_hierarchy_except(task_id, now)
             self.active_entries[task_id] = TimeEntry(
                 task_id=task_id,
                 task_name=task.name,
@@ -88,12 +112,23 @@ class CronosController:
 
     # ── Queries ───────────────────────────────────────────────────────────────
 
-    def get_today_seconds(self, task_id: str) -> float:
-        """Total seconds for a task today: persisted entries + live active entry."""
+    def get_own_seconds(self, task_id: str) -> float:
+        """Seconds for this specific task/subtask only (no subtask aggregation)."""
         saved = self.storage.get_today_totals().get(task_id, 0.0)
         if task_id in self.active_entries:
             saved += self.active_entries[task_id].elapsed_seconds()
         return saved
+
+    def get_today_seconds(self, task_id: str) -> float:
+        """Total seconds today: for top-level tasks aggregates all subtask time."""
+        if self.is_subtask(task_id):
+            return self.get_own_seconds(task_id)
+        total = self.get_own_seconds(task_id)
+        task = next((t for t in self.tasks if t.id == task_id), None)
+        if task:
+            for sub in task.subtasks:
+                total += self.get_own_seconds(sub.id)
+        return total
 
     def get_total_today_seconds(self) -> float:
         """Grand total seconds across all tasks today (saved + all live entries)."""
@@ -109,6 +144,71 @@ class CronosController:
         if entry.is_running():
             return "▶"
         return "⏸"
+
+    def get_effective_status_icon(self, task_id: str) -> str:
+        """Icon for a top-level task row: own state, or delegated from subtasks."""
+        own = self.get_status_icon(task_id)
+        if own == "▶":
+            return "▶"
+        task = next((t for t in self.tasks if t.id == task_id), None)
+        if task:
+            for sub in task.subtasks:
+                if self.get_status_icon(sub.id) == "▶":
+                    return "▶"
+            if own == "⏸":
+                return "⏸"
+            for sub in task.subtasks:
+                if self.get_status_icon(sub.id) == "⏸":
+                    return "⏸"
+        return own
+
+    # ── Lookup helpers ────────────────────────────────────────────────────────
+
+    def _find_task(self, task_id: str) -> Optional[Task]:
+        """Find any task or subtask by ID."""
+        for t in self.tasks:
+            if t.id == task_id:
+                return t
+            for s in t.subtasks:
+                if s.id == task_id:
+                    return s
+        return None
+
+    def _find_parent(self, task_id: str) -> Optional[Task]:
+        """Return the parent task of a subtask, or None if top-level."""
+        for t in self.tasks:
+            for s in t.subtasks:
+                if s.id == task_id:
+                    return t
+        return None
+
+    def is_subtask(self, task_id: str) -> bool:
+        return self._find_parent(task_id) is not None
+
+    def _pause_hierarchy_except(self, task_id: str, now: datetime) -> None:
+        """Pause all running timers in the same parent-children hierarchy except task_id."""
+        parent = self._find_parent(task_id)
+        root = parent if parent is not None else next(
+            (t for t in self.tasks if t.id == task_id), None
+        )
+        if root is None:
+            return
+        # Pause root timer if it's running and not the target
+        if root.id != task_id:
+            entry = self.active_entries.get(root.id)
+            if entry and entry.is_running():
+                start = datetime.fromisoformat(entry.start_time)
+                entry.total_seconds += (now - start).total_seconds()
+                entry.paused_at = now.isoformat(timespec="seconds")
+        # Pause all subtask timers except the target
+        for sub in root.subtasks:
+            if sub.id == task_id:
+                continue
+            entry = self.active_entries.get(sub.id)
+            if entry and entry.is_running():
+                start = datetime.fromisoformat(entry.start_time)
+                entry.total_seconds += (now - start).total_seconds()
+                entry.paused_at = now.isoformat(timespec="seconds")
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
