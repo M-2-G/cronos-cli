@@ -176,7 +176,7 @@ class TaskFormScreen(ModalScreen):
 
 
 class MainScreen(Screen):
-    """Left: task list.  Right top: selected-task detail.  Right bottom: daily summary."""
+    """Left: today + all-tasks panels.  Right: selected-task detail + daily summary."""
 
     BINDINGS = [
         Binding("space", "toggle_timer", "Start/Pause", show=True),
@@ -194,7 +194,8 @@ class MainScreen(Screen):
         self.ctrl = CronosController(StorageManager())
         self._tick_handle = None
         self._expanded: set[str] = set()
-        self._flat_items: list[FlatItem] = []
+        self._today_items: list[FlatItem] = []
+        self._all_items: list[FlatItem] = []
 
     # ── Compose ───────────────────────────────────────────────────────────────
 
@@ -202,8 +203,12 @@ class MainScreen(Screen):
         yield Header(show_clock=True)
         with Horizontal(id="main-layout"):
             with Vertical(id="left-panel"):
-                yield Label("  Tasks", id="tasks-header")
-                yield DataTable(id="task-table", cursor_type="row")
+                with Vertical(id="today-panel"):
+                    yield Label("  Today", id="today-header")
+                    yield DataTable(id="today-table", cursor_type="row")
+                with Vertical(id="all-tasks-panel"):
+                    yield Label("  All Tasks", id="all-tasks-header")
+                    yield DataTable(id="task-table", cursor_type="row")
             with Vertical(id="right-panel"):
                 with Vertical(id="detail-panel"):
                     yield Label("  Selected Task", id="detail-header")
@@ -217,11 +222,12 @@ class MainScreen(Screen):
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def on_mount(self) -> None:
-        task_table = self.query_one("#task-table", DataTable)
-        task_table.add_column(" ", key="status")
-        task_table.add_column(" ", key="done")
-        task_table.add_column("Task Name", key="name")
-        task_table.add_column("Time Today", key="time")
+        for table_id in ("today-table", "task-table"):
+            t = self.query_one(f"#{table_id}", DataTable)
+            t.add_column(" ", key="status")
+            t.add_column(" ", key="done")
+            t.add_column("Task Name", key="name")
+            t.add_column("Time Today", key="time")
 
         summary_table = self.query_one("#summary-table", DataTable)
         summary_table.add_column(" ", key="done")
@@ -236,7 +242,12 @@ class MainScreen(Screen):
 
         self._load_and_refresh()
         self._tick_handle = self.set_interval(1.0, self._on_tick)
-        task_table.focus()
+
+        # Focus today-table if it has rows, else all-tasks
+        if self.query_one("#today-table", DataTable).row_count > 0:
+            self.query_one("#today-table", DataTable).focus()
+        else:
+            self.query_one("#task-table", DataTable).focus()
 
     def on_unmount(self) -> None:
         if self._tick_handle is not None:
@@ -245,52 +256,89 @@ class MainScreen(Screen):
     # ── Event handlers ────────────────────────────────────────────────────────
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        if event.data_table.id == "task-table":
+        if event.data_table.id in ("today-table", "task-table"):
             self._refresh_detail()
 
     def on_key(self, event) -> None:
-        table = self.query_one("#task-table", DataTable)
-        if not table.has_focus:
+        if event.key == "ctrl+j":
+            self.query_one("#task-table", DataTable).focus()
+            event.stop()
+            return
+        if event.key == "ctrl+k":
+            self.query_one("#today-table", DataTable).focus()
+            event.stop()
+            return
+        focused = self._focused_table()
+        if focused is None:
             return
         if event.key == "j":
-            table.action_cursor_down()
+            focused.action_cursor_down()
             event.stop()
         elif event.key == "k":
-            table.action_cursor_up()
+            focused.action_cursor_up()
             event.stop()
         elif event.key == "enter":
             self.action_toggle_expand()
             event.stop()
 
+    # ── Selection helpers ──────────────────────────────────────────────────────
+
+    def _focused_table(self) -> Optional[DataTable]:
+        for tid in ("today-table", "task-table"):
+            t = self.query_one(f"#{tid}", DataTable)
+            if t.has_focus:
+                return t
+        return None
+
+    def _focused_items(self) -> list[FlatItem]:
+        today = self.query_one("#today-table", DataTable)
+        return self._today_items if today.has_focus else self._all_items
+
+    def _selected_flat_item(self) -> Optional[FlatItem]:
+        table = self._focused_table()
+        if table is None:
+            return None
+        items = self._focused_items()
+        row = table.cursor_row
+        if 0 <= row < len(items):
+            return items[row]
+        return None
+
+    def _selected_task(self) -> Optional[Task]:
+        item = self._selected_flat_item()
+        return item.task if item else None
+
     # ── Display refresh ───────────────────────────────────────────────────────
 
     def _load_and_refresh(self) -> None:
         self.ctrl.load_tasks()
-        self._rebuild_task_table()
+        self._rebuild_both_tables()
         self._rebuild_summary()
         self._refresh_detail()
 
-    def _build_flat_items(self) -> list[FlatItem]:
+    def _is_today_task(self, task: Task) -> bool:
+        """True if task or any subtask has been active today (persists across restarts)."""
+        if task.id in self.ctrl.active_entries:
+            return True
+        for sub in task.subtasks:
+            if sub.id in self.ctrl.active_entries:
+                return True
+        return self.ctrl.get_today_seconds(task.id) > 0
+
+    def _build_items(self, today_only: bool) -> list[FlatItem]:
         items: list[FlatItem] = []
         for task in self.ctrl.tasks:
+            if self._is_today_task(task) != today_only:
+                continue
             items.append(FlatItem(task=task))
             if task.id in self._expanded and task.subtasks:
                 for sub in task.subtasks:
                     items.append(FlatItem(task=sub, parent=task))
         return items
 
-    def _rebuild_task_table(self) -> None:
-        table = self.query_one("#task-table", DataTable)
-
-        # Save cursor position by task ID before clearing
-        saved_id: Optional[str] = None
-        if table.row_count > 0 and 0 <= table.cursor_row < len(self._flat_items):
-            saved_id = self._flat_items[table.cursor_row].task.id
-
-        self._flat_items = self._build_flat_items()
+    def _fill_table(self, table: DataTable, items: list[FlatItem]) -> None:
         table.clear()
-
-        for item in self._flat_items:
+        for item in items:
             if item.is_subtask:
                 icon = self.ctrl.get_status_icon(item.task.id)
                 name = f"  └ {item.task.name}"
@@ -312,26 +360,47 @@ class MainScreen(Screen):
                 key=item.task.id,
             )
 
-        # Restore cursor by task ID
-        target_row = 0
+    def _rebuild_table(self, table_id: str, items: list[FlatItem], saved_id: Optional[str]) -> None:
+        table = self.query_one(f"#{table_id}", DataTable)
+        self._fill_table(table, items)
+        # Restore cursor
+        target = 0
         if saved_id is not None:
-            found = False
-            for i, item in enumerate(self._flat_items):
+            for i, item in enumerate(items):
                 if item.task.id == saved_id:
-                    target_row = i
-                    found = True
+                    target = i
                     break
-            if not found:
-                # Subtask may have been collapsed; land on its parent
+            else:
                 parent = self.ctrl._find_parent(saved_id)
                 if parent:
-                    for i, item in enumerate(self._flat_items):
+                    for i, item in enumerate(items):
                         if item.task.id == parent.id:
-                            target_row = i
+                            target = i
                             break
-
         if table.row_count > 0:
-            table.move_cursor(row=min(target_row, table.row_count - 1))
+            table.move_cursor(row=min(target, table.row_count - 1))
+
+    def _rebuild_both_tables(self) -> None:
+        today_table = self.query_one("#today-table", DataTable)
+        all_table = self.query_one("#task-table", DataTable)
+
+        # Save cursors before rebuild
+        saved_today = (
+            self._today_items[today_table.cursor_row].task.id
+            if today_table.row_count > 0 and 0 <= today_table.cursor_row < len(self._today_items)
+            else None
+        )
+        saved_all = (
+            self._all_items[all_table.cursor_row].task.id
+            if all_table.row_count > 0 and 0 <= all_table.cursor_row < len(self._all_items)
+            else None
+        )
+
+        self._today_items = self._build_items(today_only=True)
+        self._all_items = self._build_items(today_only=False)
+
+        self._rebuild_table("today-table", self._today_items, saved_today)
+        self._rebuild_table("task-table", self._all_items, saved_all)
 
     def _rebuild_summary(self) -> None:
         summary = self.query_one("#summary-table", DataTable)
@@ -411,47 +480,33 @@ class MainScreen(Screen):
     def _on_tick(self) -> None:
         if not self.ctrl.active_entries:
             return
-        table = self.query_one("#task-table", DataTable)
 
-        # Collect IDs to update: active entries + their parents (for aggregated time)
+        # Collect IDs to update: active entries + their parents
         ids_to_update: set[str] = set(self.ctrl.active_entries.keys())
         for task_id in list(self.ctrl.active_entries.keys()):
             parent = self.ctrl._find_parent(task_id)
             if parent:
                 ids_to_update.add(parent.id)
 
-        visible_ids = {item.task.id for item in self._flat_items}
-        for task_id in ids_to_update:
-            if task_id not in visible_ids:
-                continue
-            if self.ctrl.is_subtask(task_id):
-                icon = self.ctrl.get_status_icon(task_id)
-                secs = self.ctrl.get_own_seconds(task_id)
-            else:
-                icon = self.ctrl.get_effective_status_icon(task_id)
-                secs = self.ctrl.get_today_seconds(task_id)
-            try:
-                table.update_cell(task_id, "time", _time_cell(secs, icon))
-            except Exception:
-                pass
+        for table_id, items in (("today-table", self._today_items), ("task-table", self._all_items)):
+            table = self.query_one(f"#{table_id}", DataTable)
+            visible = {item.task.id for item in items}
+            for task_id in ids_to_update:
+                if task_id not in visible:
+                    continue
+                if self.ctrl.is_subtask(task_id):
+                    icon = self.ctrl.get_status_icon(task_id)
+                    secs = self.ctrl.get_own_seconds(task_id)
+                else:
+                    icon = self.ctrl.get_effective_status_icon(task_id)
+                    secs = self.ctrl.get_today_seconds(task_id)
+                try:
+                    table.update_cell(task_id, "time", _time_cell(secs, icon))
+                except Exception:
+                    pass
 
         self._rebuild_summary()
         self._refresh_detail()
-
-    # ── Selection ─────────────────────────────────────────────────────────────
-
-    def _selected_flat_item(self) -> Optional[FlatItem]:
-        table = self.query_one("#task-table", DataTable)
-        if table.row_count == 0:
-            return None
-        row = table.cursor_row
-        if 0 <= row < len(self._flat_items):
-            return self._flat_items[row]
-        return None
-
-    def _selected_task(self) -> Optional[Task]:
-        item = self._selected_flat_item()
-        return item.task if item else None
 
     # ── Actions (UI → controller → refresh) ──────────────────────────────────
 
@@ -460,16 +515,24 @@ class MainScreen(Screen):
         if not task:
             return
         self.ctrl.toggle_timer(task.id)
-        self._rebuild_task_table()
+        self._rebuild_both_tables()
         self._rebuild_summary()
         self._refresh_detail()
+        # If the task just moved to today, follow it there
+        if self._is_today_task(self.ctrl._find_task(task.id) or task):
+            today_table = self.query_one("#today-table", DataTable)
+            for i, item in enumerate(self._today_items):
+                if item.task.id == task.id:
+                    today_table.focus()
+                    today_table.move_cursor(row=i)
+                    break
 
     def action_stop_timer(self) -> None:
         task = self._selected_task()
         if not task:
             return
         self.ctrl.stop_timer(task.id)
-        self._rebuild_task_table()
+        self._rebuild_both_tables()
         self._rebuild_summary()
         self._refresh_detail()
 
@@ -477,7 +540,7 @@ class MainScreen(Screen):
         def on_result(data: Optional[dict]) -> None:
             if data:
                 self.ctrl.create_task(data["name"], data["description"])
-                self._rebuild_task_table()
+                self._rebuild_both_tables()
                 self._rebuild_summary()
                 self._refresh_detail()
                 self.query_one("#task-table", DataTable).focus()
@@ -488,17 +551,17 @@ class MainScreen(Screen):
         item = self._selected_flat_item()
         if item is None:
             return
-        # Add subtask to the top-level parent (no nested subtasks)
         parent = item.parent if item.is_subtask else item.task
+        focused_id = self._focused_table().id
 
         def on_result(data: Optional[dict]) -> None:
             if data:
                 self.ctrl.create_subtask(parent.id, data["name"], data["description"])
-                self._expanded.add(parent.id)  # auto-expand to show new subtask
-                self._rebuild_task_table()
+                self._expanded.add(parent.id)
+                self._rebuild_both_tables()
                 self._rebuild_summary()
                 self._refresh_detail()
-                self.query_one("#task-table", DataTable).focus()
+                self.query_one(f"#{focused_id}", DataTable).focus()
 
         self.app.push_screen(TaskFormScreen(parent=parent), on_result)
 
@@ -513,7 +576,7 @@ class MainScreen(Screen):
             self._expanded.discard(target.id)
         else:
             self._expanded.add(target.id)
-        self._rebuild_task_table()
+        self._rebuild_both_tables()
 
     def action_edit_task(self) -> None:
         item = self._selected_flat_item()
@@ -521,14 +584,15 @@ class MainScreen(Screen):
             return
         task = item.task
         parent = item.parent if item.is_subtask else None
+        focused_id = self._focused_table().id
 
         def on_result(data: Optional[dict]) -> None:
             if data:
                 self.ctrl.update_task(task, data["name"], data["description"])
-                self._rebuild_task_table()
+                self._rebuild_both_tables()
                 self._rebuild_summary()
                 self._refresh_detail()
-                self.query_one("#task-table", DataTable).focus()
+                self.query_one(f"#{focused_id}", DataTable).focus()
 
         self.app.push_screen(TaskFormScreen(task, parent=parent), on_result)
 
@@ -536,14 +600,15 @@ class MainScreen(Screen):
         task = self._selected_task()
         if not task:
             return
+        focused_id = self._focused_table().id
 
         def on_result(confirmed: bool) -> None:
             if confirmed:
                 self.ctrl.delete_task(task.id)
-                self._rebuild_task_table()
+                self._rebuild_both_tables()
                 self._rebuild_summary()
                 self._refresh_detail()
-                self.query_one("#task-table", DataTable).focus()
+                self.query_one(f"#{focused_id}", DataTable).focus()
 
         self.app.push_screen(
             ConfirmDialog(f'Delete "{task.name}"?'),
@@ -555,7 +620,7 @@ class MainScreen(Screen):
         if not task:
             return
         self.ctrl.toggle_complete(task.id)
-        self._rebuild_task_table()
+        self._rebuild_both_tables()
         self._rebuild_summary()
         self._refresh_detail()
 

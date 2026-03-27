@@ -12,7 +12,6 @@ Screen {
 
 #left-panel {
     width: 2fr;
-    border: tall $primary;
     margin: 1 0 1 1;
 }
 
@@ -22,15 +21,39 @@ Screen {
     margin: 1 1 1 1;
 }
 
-/* ── Left panel ──────────────────────────────────────────────────────── */
+/* ── Left panel: today (top) + all-tasks (bottom) ────────────────────── */
 
-#tasks-header {
+#today-panel {
+    height: 1fr;
+    border: tall $success;
+    margin: 0 0 1 0;
+}
+
+#all-tasks-panel {
+    height: 1fr;
+    border: tall $primary;
+}
+
+#today-header {
+    background: $success 20%;
+    text-style: bold;
+    height: 3;
+    content-align: left middle;
+    padding: 0 1;
+    color: $text;
+}
+
+#all-tasks-header {
     background: $primary 20%;
     text-style: bold;
     height: 3;
     content-align: left middle;
     padding: 0 1;
     color: $text;
+}
+
+#today-table {
+    height: 1fr;
 }
 
 #task-table {
