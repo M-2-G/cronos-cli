@@ -120,12 +120,18 @@ class TaskFormScreen(ModalScreen):
         Binding("escape", "cancel", "Cancel"),
     ]
 
-    def __init__(self, task: Optional[Task] = None) -> None:
+    def __init__(
+        self, task: Optional[Task] = None, parent: Optional[Task] = None
+    ) -> None:
         super().__init__()
         self._edit_task = task
+        self._parent_task = parent
 
     def compose(self) -> ComposeResult:
-        title = "Edit Task" if self._edit_task else "New Task"
+        if self._edit_task:
+            title = f"Edit Subtask  ·  {self._parent_task.name}" if self._parent_task else "Edit Task"
+        else:
+            title = f"New Subtask  ·  {self._parent_task.name}" if self._parent_task else "New Task"
         with Container(id="task-form"):
             yield Label(title, id="form-title")
             yield Rule()
@@ -168,12 +174,12 @@ class MainScreen(Screen):
     BINDINGS = [
         Binding("space", "toggle_timer", "Start/Pause", show=True),
         Binding("s", "stop_timer", "Stop", show=True),
+        Binding("w", "complete_task", "Complete", show=True),
         Binding("n", "new_task", "New", show=True),
         Binding("a", "add_subtask", "Subtask", show=True),
         Binding("e", "edit_task", "Edit", show=True),
         Binding("d", "delete_task", "Delete", show=True),
-        Binding("r", "refresh", "Refresh", show=True),
-        Binding("q", "quit_app", "Quit", show=True),
+        Binding("Q", "quit_app", "Quit", show=True),
     ]
 
     def __init__(self) -> None:
@@ -275,18 +281,19 @@ class MainScreen(Screen):
         table.clear()
 
         for item in self._flat_items:
+            check = "✓ " if item.task.status == "completed" else ""
             if item.is_subtask:
                 icon = self.ctrl.get_status_icon(item.task.id)
-                name = f"  └ {item.task.name}"
+                name = f"  └ {check}{item.task.name}"
                 secs = self.ctrl.get_own_seconds(item.task.id)
             else:
                 icon = self.ctrl.get_effective_status_icon(item.task.id)
                 has_subs = bool(item.task.subtasks)
                 if has_subs:
                     marker = " ▾" if item.task.id in self._expanded else " ▸"
-                    name = f"{item.task.name}{marker}"
+                    name = f"{check}{item.task.name}{marker}"
                 else:
-                    name = item.task.name
+                    name = f"{check}{item.task.name}"
                 secs = self.ctrl.get_today_seconds(item.task.id)
             table.add_row(
                 _icon_cell(icon),
@@ -323,7 +330,8 @@ class MainScreen(Screen):
         for task in self.ctrl.tasks:
             secs = self.ctrl.get_today_seconds(task.id)
             if secs > 0:
-                summary.add_row(task.name, fmt_time(secs))
+                check = "✓ " if task.status == "completed" else ""
+                summary.add_row(f"{check}{task.name}", fmt_time(secs))
                 has_time = True
         if not has_time:
             summary.add_row("No time tracked today", "──────")
@@ -366,8 +374,9 @@ class MainScreen(Screen):
             lines.append("")
             lines.append("[dim]No active timer[/dim]")
 
+        check = "✓ " if task.status == "completed" else ""
         lines += ["", "─" * 22, ""]
-        lines.append(f"[bold]{task.name}[/bold]")
+        lines.append(f"[bold]{check}{task.name}[/bold]")
         if task.description:
             lines.append(f"[dim]{task.description}[/dim]")
 
@@ -380,9 +389,10 @@ class MainScreen(Screen):
             for sub in task.subtasks:
                 sub_icon = self.ctrl.get_status_icon(sub.id)
                 sub_secs = self.ctrl.get_own_seconds(sub.id)
+                sub_check = "✓ " if sub.status == "completed" else ""
                 sub_table.add_row(
                     _icon_cell(sub_icon),
-                    sub.name,
+                    f"{sub_check}{sub.name}",
                     _time_cell(sub_secs, sub_icon),
                 )
         else:
@@ -480,7 +490,7 @@ class MainScreen(Screen):
                 self._refresh_detail()
                 self.query_one("#task-table", DataTable).focus()
 
-        self.app.push_screen(TaskFormScreen(), on_result)
+        self.app.push_screen(TaskFormScreen(parent=parent), on_result)
 
     def action_toggle_expand(self) -> None:
         item = self._selected_flat_item()
@@ -496,9 +506,11 @@ class MainScreen(Screen):
         self._rebuild_task_table()
 
     def action_edit_task(self) -> None:
-        task = self._selected_task()
-        if not task:
+        item = self._selected_flat_item()
+        if item is None:
             return
+        task = item.task
+        parent = item.parent if item.is_subtask else None
 
         def on_result(data: Optional[dict]) -> None:
             if data:
@@ -508,7 +520,7 @@ class MainScreen(Screen):
                 self._refresh_detail()
                 self.query_one("#task-table", DataTable).focus()
 
-        self.app.push_screen(TaskFormScreen(task), on_result)
+        self.app.push_screen(TaskFormScreen(task, parent=parent), on_result)
 
     def action_delete_task(self) -> None:
         task = self._selected_task()
@@ -528,8 +540,14 @@ class MainScreen(Screen):
             on_result,
         )
 
-    def action_refresh(self) -> None:
-        self._load_and_refresh()
+    def action_complete_task(self) -> None:
+        task = self._selected_task()
+        if not task:
+            return
+        self.ctrl.toggle_complete(task.id)
+        self._rebuild_task_table()
+        self._rebuild_summary()
+        self._refresh_detail()
 
     def action_quit_app(self) -> None:
         self.ctrl.save_all_timers()

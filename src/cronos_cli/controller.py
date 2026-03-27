@@ -39,6 +39,14 @@ class CronosController:
         self.storage.save_tasks(self.tasks)
         return subtask
 
+    def toggle_complete(self, task_id: str) -> None:
+        """Toggle the completed status of a task or subtask."""
+        task = self._find_task(task_id)
+        if task is None:
+            return
+        task.status = "" if task.status == "completed" else "completed"
+        self.storage.save_tasks(self.tasks)
+
     def update_task(self, task: Task, name: str, description: str) -> None:
         task.name = name
         task.description = description

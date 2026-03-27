@@ -340,6 +340,33 @@ class TestGetStatusIcon:
 # ── Subtask feature ───────────────────────────────────────────────────────────
 
 
+class TestToggleComplete:
+    def test_marks_task_completed(self, ctrl):
+        task = ctrl.create_task("T", "")
+        ctrl.toggle_complete(task.id)
+        assert task.status == "completed"
+
+    def test_unmarks_completed_task(self, ctrl):
+        task = ctrl.create_task("T", "")
+        ctrl.toggle_complete(task.id)
+        ctrl.toggle_complete(task.id)
+        assert task.status == ""
+
+    def test_persists(self, ctrl, storage):
+        task = ctrl.create_task("T", "")
+        ctrl.toggle_complete(task.id)
+        assert storage.load_tasks()[0].status == "completed"
+
+    def test_works_on_subtask(self, ctrl):
+        parent = ctrl.create_task("P", "")
+        sub = ctrl.create_subtask(parent.id, "S", "")
+        ctrl.toggle_complete(sub.id)
+        assert sub.status == "completed"
+
+    def test_unknown_id_is_noop(self, ctrl):
+        ctrl.toggle_complete("no-such-id")
+
+
 class TestFindTask:
     def test_finds_top_level(self, ctrl):
         task = ctrl.create_task("T", "")

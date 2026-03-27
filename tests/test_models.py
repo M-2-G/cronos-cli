@@ -23,7 +23,7 @@ class TestTask:
 
     def test_to_dict_keys(self):
         keys = Task(name="x").to_dict().keys()
-        assert set(keys) == {"id", "name", "description", "created_at", "subtasks"}
+        assert set(keys) == {"id", "name", "description", "created_at", "subtasks", "status"}
 
     def test_subtasks_default_empty(self):
         task = Task(name="T")
@@ -38,11 +38,15 @@ class TestTask:
         assert restored.subtasks[0].name == "Child"
         assert restored.subtasks[0].description == "sub"
 
+    def test_status_defaults_empty(self):
+        assert Task(name="T").status == ""
+
     def test_legacy_dict_no_subtasks_key(self):
         """Tasks saved before subtasks feature load without error."""
         data = {"id": "abc", "name": "Old", "description": "", "created_at": "2024-01-01T00:00:00"}
         task = Task.from_dict(data)
         assert task.subtasks == []
+        assert task.status == ""
 
 
 class TestTimeEntry:
